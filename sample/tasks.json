@@ -1,0 +1,9 @@
+{
+  "tasks": [
+    { "name": "Portfolio refresh", "impact": 9.3, "urgency": 8.1, "effort": 4.0, "risk": 2.0 },
+    { "name": "CLI docs cleanup", "impact": 6.5, "urgency": 5.6, "effort": 2.2, "risk": 1.0 },
+    { "name": "Auth hardening", "impact": 8.9, "urgency": 8.8, "effort": 6.2, "risk": 4.0 },
+    { "name": "Latency telemetry", "impact": 8.2, "urgency": 7.2, "effort": 3.4, "risk": 2.3 }
+  ]
+}
+
