@@ -35,3 +35,47 @@ func TestBuildSprintPlanRespectsBudget(t *testing.T) {
 	}
 }
 
+func TestBuildSprintPlanBeatsGreedyWhenCheapTaskBlocks(t *testing.T) {
+	// "quick" has the best score per effort, so a greedy fill takes it first
+	// and then only one "big" fits. Two bigs are worth far more.
+	tasks := []Task{
+		{Name: "quick", Impact: 3, Urgency: 3, Effort: 1, Risk: 5},
+		{Name: "big-a", Impact: 10, Urgency: 10, Effort: 5, Risk: 0},
+		{Name: "big-b", Impact: 10, Urgency: 10, Effort: 5, Risk: 0},
+	}
+
+	plan, used := BuildSprintPlan(tasks, 10)
+	if used != 10 || len(plan) != 2 {
+		t.Fatalf("expected both big tasks using 10, got %d tasks using %v", len(plan), used)
+	}
+	for _, task := range plan {
+		if task.Name == "quick" {
+			t.Fatalf("plan should not include quick: %+v", plan)
+		}
+	}
+
+	_, greedyUsed := greedyPlan(RankTasks(tasks), 10)
+	if greedyUsed != 6 {
+		t.Fatalf("expected greedy to strand budget at 6, got %v", greedyUsed)
+	}
+}
+
+func TestBuildSprintPlanNeverExceedsBudgetWithFractionalEffort(t *testing.T) {
+	tasks := []Task{
+		{Name: "a", Impact: 9, Urgency: 9, Effort: 3.34, Risk: 1},
+		{Name: "b", Impact: 9, Urgency: 9, Effort: 3.33, Risk: 1},
+		{Name: "c", Impact: 9, Urgency: 9, Effort: 3.34, Risk: 1},
+	}
+
+	_, used := BuildSprintPlan(tasks, 10)
+	if used > 10 {
+		t.Fatalf("used %v exceeds budget 10", used)
+	}
+}
+
+func TestBuildSprintPlanZeroBudget(t *testing.T) {
+	plan, used := BuildSprintPlan([]Task{{Name: "a", Effort: 1}}, 0)
+	if len(plan) != 0 || used != 0 {
+		t.Fatalf("expected empty plan, got %+v", plan)
+	}
+}
