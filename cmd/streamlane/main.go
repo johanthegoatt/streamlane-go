@@ -2,10 +2,12 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"streamlane-go/internal/ranker"
 )
@@ -79,38 +81,72 @@ func buildResponse(request rankRequest) rankResponse {
 	}
 }
 
-func runServer(defaultBudget float64) {
+const (
+	listenAddr   = ":8094"
+	maxBodyBytes = 1 << 20 // 1 MiB is far above any realistic backlog payload
+)
+
+// newMux builds the API routes. Kept separate from the listener so handlers
+// can be exercised with httptest.
+func newMux(defaultBudget float64) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 	})
 
 	mux.HandleFunc("/rank", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
-			w.WriteHeader(http.StatusMethodNotAllowed)
+			w.Header().Set("Allow", http.MethodPost)
+			writeError(w, http.StatusMethodNotAllowed, "use POST")
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 		request := rankRequest{}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-			w.WriteHeader(http.StatusBadRequest)
-			_, _ = w.Write([]byte(`{"error":"invalid json"}`))
+			var tooLarge *http.MaxBytesError
+			if errors.As(err, &tooLarge) {
+				writeError(w, http.StatusRequestEntityTooLarge, "request body exceeds 1 MiB")
+				return
+			}
+			writeError(w, http.StatusBadRequest, "invalid json")
 			return
 		}
 		if request.Budget <= 0 {
 			request.Budget = defaultBudget
 		}
 
-		response := buildResponse(request)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response)
+		writeJSON(w, http.StatusOK, buildResponse(request))
 	})
+	return mux
+}
 
-	fmt.Println("streamlane-go listening on :8094")
-	if err := http.ListenAndServe(":8094", mux); err != nil {
+func writeJSON(w http.ResponseWriter, status int, body any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+func writeError(w http.ResponseWriter, status int, message string) {
+	writeJSON(w, status, map[string]string{"error": message})
+}
+
+// runServer uses an explicit http.Server because the package-level
+// ListenAndServe has no timeouts, which leaves the API open to slow-header
+// (Slowloris) connections that hold goroutines forever (gosec G112).
+func runServer(defaultBudget float64) {
+	server := &http.Server{
+		Addr:              listenAddr,
+		Handler:           newMux(defaultBudget),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      15 * time.Second,
+		IdleTimeout:       60 * time.Second,
+	}
+
+	fmt.Printf("streamlane-go listening on %s\n", listenAddr)
+	if err := server.ListenAndServe(); err != nil {
 		fmt.Printf("server failed: %v\n", err)
 		os.Exit(1)
 	}
 }
-
